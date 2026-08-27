@@ -1,0 +1,21 @@
+# Horizontal Pod Autoscaler: schaalt op zodra de pods gemiddeld boven
+# 50% van hun cpu-request (50m) zitten. Test met:  hey -z 60s -c 50 http://<ip>/
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+  namespace: shortener
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50

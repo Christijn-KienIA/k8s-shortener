@@ -1,0 +1,57 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:        # knop in de Actions-tab om handmatig te starten
+
+env:
+  IMAGE: ghcr.io/christijn-kienia/k8s-shortener
+
+jobs:
+  deploy:
+    # Draait op JOUW vps, niet in de GitHub-cloud
+    runs-on: [self-hosted, k3s]
+    permissions:
+      contents: read
+      packages: write       # nodig om naar GHCR te pushen
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inloggen bij GHCR
+        run: echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+
+      - name: Image bouwen
+        run: |
+          docker build \
+            --build-arg APP_VERSION=${GITHUB_SHA::7} \
+            -t "$IMAGE:${GITHUB_SHA}" \
+            -t "$IMAGE:latest" \
+            app/
+
+      - name: Image pushen
+        run: |
+          docker push "$IMAGE:${GITHUB_SHA}"
+          docker push "$IMAGE:latest"
+
+      - name: Pull-secret verversen
+        # Het cluster moet bij GHCR kunnen. GITHUB_TOKEN is per run geldig,
+        # dus we verversen het secret bij elke deploy.
+        run: |
+          kubectl -n shortener create secret docker-registry ghcr-pull \
+            --docker-server=ghcr.io \
+            --docker-username='${{ github.actor }}' \
+            --docker-password='${{ secrets.GITHUB_TOKEN }}' \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deployen
+        run: |
+          # Vervang de :latest-tag door de commit-sha. Een unieke tag dwingt
+          # Kubernetes af de nieuwe image echt op te halen.
+          sed -i "s|$IMAGE:latest|$IMAGE:${GITHUB_SHA}|" deploy/20-api.yaml
+          kubectl apply -f deploy/
+          kubectl -n shortener rollout status deployment/api --timeout=180s
+
+      - name: Wat draait er nu
+        run: kubectl -n shortener get pods -o wide
